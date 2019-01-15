@@ -1,16 +1,25 @@
 package net.andimiller.pyro
 
-import net.andimiller.pyro.core._, net.andimiller.pyro.dsl.matcher.Matcher._
+import net.andimiller.pyro.core._
+import net.andimiller.pyro.core.syntax._
 import cats._, cats.implicits._
+import shapeless._
 
-object Example {
-  def above(i: Int) = Predicate[Int](_ > i)
-  def below(i: Int) = Predicate[Int](_ < i)
 
-  7 mustBe(above(5) and below(10))
-  7 mustBe above(5)
-  7 mustBe (above(5), below(10))
+object Example extends App {
 
-  7 mustBe equalTo(4)
+  def validate(i: Int) =
+    i
+      .assert("must be over 10") { _ > 10 }
+      .assert("must be even") { _ % 2 == 0 }
+
+  def validateString(s: String) =
+    s
+      .assert("must not be empty"){_.nonEmpty}
+      .assert("must be lowercase"){s => s.toLowerCase == s}
+
+  val result = (validate(3) and validateString("") and validateString("HELLO")).accumulatedRun
+  println(result)
+
 
 }

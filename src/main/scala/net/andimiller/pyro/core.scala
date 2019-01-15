@@ -1,79 +1,48 @@
 package net.andimiller.pyro
 
-import cats._, cats.implicits._
+import cats._
+import cats.data._
+import cats.implicits._
+import shapeless._
+import shapeless.ops.hlist.{LeftFolder, MapFolder, Prepend}
+import shapeless.poly._
 
-package object core {
+object core {
 
-  case class Differ[A](run: (A, A) => Option[String]) {
-    def apply(a: (A, A)): Option[String] = run.tupled(a)
-    def toPredicate(a: A) = Predicate[A]((o: A) => run(o, a).isEmpty)
+  type Predicate[A] = A => Either[NonEmptyList[String], A]
+  case class Asserts[A](a: A, as: List[Predicate[A]]) {
+    def assert(s: String)(f: A => Boolean): Asserts[A] = copy(as = { (a: A) => if (f(a)) Right(a) else Left(NonEmptyList.of(s)) } :: as)
+    def compile: Compiled[A] = Compiled(this)
+    def and[B](b: Asserts[B]) = this :: b :: HNil
+  }
+  case class Compiled[A](as: Asserts[A]) {
+    def run: Either[NonEmptyList[String], A] = as.as.map(_.apply(as.a)).sequence.map(_ => as.a)
+    def accumulatedRun: Either[NonEmptyList[String], A] = as.as.map(_.apply(as.a)).parSequence.map(_ => as.a)
   }
 
-  object Differ {
-    def apply[A](f: (A, A) => Option[String]) = new Differ(f)
+  object Evaluator extends Poly1 {
+    implicit def asserts[T] = at[Asserts[T]](_.compile.run.map(_ => ()))
   }
 
-  case class Predicate[A](run: A => Boolean) {
-    def apply(a: A) = run(a)
+  object AccumulatedEvaluator extends Poly1 {
+    implicit def asserts[T] = at[Asserts[T]](_.compile.accumulatedRun.map(_ => ()))
   }
 
-  case class OrPredicate[A](run: Predicate[A]) {
-    def apply(a: A) = run.run(a)
-  }
-
-  object OrPredicate {
-    def apply[A](f: A => Boolean): OrPredicate[A] = OrPredicate(f)
-
-    implicit def monoidForOrPredicate[A]: Monoid[OrPredicate[A]] = new OrPredicateMonoid[A]
-
-    class OrPredicateMonoid[A] extends Monoid[OrPredicate[A]] {
-      override def empty: OrPredicate[A] = OrPredicate[A]((_: A) => false)
-
-      override def combine(x: OrPredicate[A], y: OrPredicate[A]): OrPredicate[A] = OrPredicate(x.run or y.run)
+  object syntax {
+    implicit class InitialAssertChainSyntax[A](a: A) {
+      def assert(s: String)(f: A => Boolean): Asserts[A] = Asserts(a, List((a: A) => if (f(a)) Right(a) else Left(NonEmptyList.of(s))))
     }
-
-    implicit val OrPredicateContravariantMonoidal: ContravariantMonoidal[OrPredicate] = new ContravariantMonoidal[OrPredicate] {
-      override def product[A, B](fa: OrPredicate[A], fb: OrPredicate[B]): OrPredicate[(A, B)] = OrPredicate[(A, B)] { ab: (A, B) =>
-        fa(ab._1) || fb(ab._2)
-      }
-
-      override def contramap[A, B](fa: OrPredicate[A])(f: B => A): OrPredicate[B] = OrPredicate[B]((b: B) => fa.run(f(b)))
-
-      override def unit: OrPredicate[Unit] = OrPredicate[Unit]((_: Unit) => false)
+    implicit class AssertsChain[H <: HList](hs: H) {
+      def and[B](b: Asserts[B])(implicit c: UnaryTCConstraint[H, Asserts], p: Prepend[H, Asserts[B] :: HNil]) = hs :+ b
+      def run(implicit c: UnaryTCConstraint[H, Asserts], mf: MapFolder[H, Either[NonEmptyList[String], Unit], Evaluator.type]): Either[NonEmptyList[String], Unit] =
+        hs.foldMap(().asRight[NonEmptyList[String]])(Evaluator)((a, b) => List(a, b).sequence.map(_ => ()))
+      def accumulatedRun(implicit c: UnaryTCConstraint[H, Asserts], mf: MapFolder[H, Either[NonEmptyList[String], Unit], AccumulatedEvaluator.type]): Either[NonEmptyList[String], Unit] =
+        hs.foldMap(().asRight[NonEmptyList[String]])(AccumulatedEvaluator)((a, b) => List(a, b).parSequence.map(_ => ()))
     }
   }
 
   object Predicate {
-    def apply[A](f: A => Boolean): Predicate[A] = Predicate(f)
-
-    def isEqualTo[A](a: A)(implicit e: Eq[A]): Predicate[A] = Predicate[A] { o => e.eqv(a, o) }
-
-    implicit def monoidForPredicate[A]: Monoid[Predicate[A]] = new PredicateMonoid[A]
-
-    class PredicateMonoid[A] extends Monoid[Predicate[A]] {
-      override def empty: Predicate[A] = Predicate[A](_ => true)
-
-      override def combine(x: Predicate[A], y: Predicate[A]): Predicate[A] = x and y
-    }
-
-    implicit val PredicateContravariantMonoidal: ContravariantMonoidal[Predicate] = new ContravariantMonoidal[Predicate] {
-      override def product[A, B](fa: Predicate[A], fb: Predicate[B]): Predicate[(A, B)] = Predicate[(A, B)] { ab: (A, B) =>
-        fa(ab._1) && fb(ab._2)
-      }
-
-      override def contramap[A, B](fa: Predicate[A])(f: B => A): Predicate[B] = Predicate[B](b => fa(f(b)))
-
-      override def unit: Predicate[Unit] = Predicate[Unit](_ => true)
-    }
-
-    implicit class PredicateOps[A](p: Predicate[A]) {
-      def negate: Predicate[A] = Predicate(p.run.andThen(!_))
-
-      def and(o: Predicate[A]): Predicate[A] = p.product(o).contramap((a: A) => (a, a))
-
-      def or(o: Predicate[A]): Predicate[A] = OrPredicate(p).product(OrPredicate(o)).contramap((a: A) => (a, a)).run
-    }
-
+    def fromOptionString[A](f: A => Option[String]): Predicate[A] = (a: A) => f(a).map(r => Left(NonEmptyList.of(r))).getOrElse(Right(a))
   }
 
 }
