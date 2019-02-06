@@ -37,7 +37,7 @@ object NestedDsl {
   )
 
   "maths" should Stream.range(1, 1000).map { i =>
-    s"double $i" in IO { (i * 2).validNel[String].ensure[String]("is bigger than i")(_ > i) }
+    s"double $i" in IO { (i * 2).validNel[String].ensure(NonEmptyList.of("is bigger than i"))(_ > i).void }
   }
 
 }
