@@ -5,21 +5,20 @@ import net.andimiller.pyro.core.syntax._
 import cats._, cats.implicits._
 import shapeless._
 
-
 object Example extends App {
 
   def validate(i: Int) =
-    i
-      .assert("must be over 10") { _ > 10 }
+    i.assert("must be over 10") { _ > 10 }
       .assert("must be even") { _ % 2 == 0 }
 
   def validateString(s: String) =
-    s
-      .assert("must not be empty"){_.nonEmpty}
-      .assert("must be lowercase"){s => s.toLowerCase == s}
+    s.assert("must not be empty") { _.nonEmpty }
+      .assert("must be lowercase") { s =>
+        s.toLowerCase == s
+      }
 
-  val result = (validate(3) and validateString("") and validateString("HELLO")).accumulatedRun
+  val result =
+    (validate(3) and validateString("") and validateString("HELLO")).run
   println(result)
-
 
 }
