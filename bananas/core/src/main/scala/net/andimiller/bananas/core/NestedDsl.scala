@@ -16,7 +16,8 @@ object NestedDsl {
     def are       = PartialGrammarNode(s, "are")
     def areNot    = PartialGrammarNode(s, "are not")
 
-    def in[F[_]](test: F[Assertions]) = Test(NonEmptyChain(s), test)
+//    def in[F[_]](test: F[Assertions]) = Test(NonEmptyChain(s), test)
+    def in[F[_]: Functor, T](test: F[ValidatedNel[String, T]]) = Test(NonEmptyChain(s), test.map(_.void))
   }
 
   case class PartialGrammarNode(s: String, v: String) {
@@ -31,13 +32,14 @@ object NestedDsl {
 
   val cool = "be cool" in IO { ().validNel[String] }
   "dogs" should("be cool" in IO { ().validNel[String] })
-  "dogs" should Stream.emit(
+
+  "dogs" should Stream.emits(List(
     "be pet" in IO { ().validNel[String] },
     "test" in IO { ().validNel[String] }
-  )
+  ))
 
   "maths" should Stream.range(1, 1000).map { i =>
-    s"double $i" in IO { (i * 2).validNel[String].ensure(NonEmptyList.of("is bigger than i"))(_ > i).void }
+    s"double $i" in IO { (i * 2).validNel[String].ensure(NonEmptyList.of("is bigger than i"))(_ > i) }
   }
 
 }
